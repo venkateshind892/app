@@ -1871,5 +1871,127 @@ with st.container(border=True):
         """,
         unsafe_allow_html=True
     )
+``````python
+import streamlit as st
+import requests
+import subprocess
+import re
+
+# --- CONFIGURATION ---
+OLLAMA_URL = "http://localhost:11434/api/chat"
+DEFAULT_MODEL = "qwen2.5:3b"
+
+# Safe allowlist of macOS apps
+# Key: Keyword to trigger, Value: Exact macOS Application name
+APP_ALLOWLIST = {
+    "whatsapp": "WhatsApp",
+    "safari": "Safari",
+    "vs code": "Visual Studio Code",
+    "vscode": "Visual Studio Code",
+    "finder": "Finder",
+    "terminal": "Terminal",
+    "spotify": "Spotify",
+    "calculator": "Calculator",
+}
+
+# Personas with system prompts
+PERSONAS = {
+    "Helpful Assistant": "You are a helpful, polite AI assistant. Answer clearly and concisely.",
+    "The Blunt Friend (Tanglish)": (
+        "You are a close friend who is brutally honest, sarcastic, and speaks in a mix of English and Tamil (Tanglish). "
+        "You frequently scold the user about their studies, especially if they mention 'arrears' or 'exams'. "
+        "Your tone is 'friendly-aggressive'. Use phrases like 'da', 'paiyale', 'tharkuri', 'suttura'. "
+        "Example style: 'Yei tharkuri paiyale, un appa kasta pattu padikka vaikkiraaru, nee ipdi arrear vacchuthu suttura!' "
+        "Keep responses short, punchy, and very informal."
+    ),
+}
+
+def open_macos_app(app_keyword):
+    """Safely opens a macOS app from the allowlist."""
+    app_name = APP_ALLOWLIST.get(app_keyword.lower())
+    if app_name:
+        try:
+            # 'open -a' is the standard macOS way to launch apps by name
+            subprocess.run(["open", "-a", app_name], check=True)
+            return f"✅ Opened {app_name} for you!"
+        except Exception as e:
+            return f"❌ Failed to open {app_name}: {str(e)}"
+    return None
+
+def get_ollama_response(prompt, system_prompt, history):
+    """Calls the local Ollama API."""
+    payload = {
+        "model": DEFAULT_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            *history,
+            {"role": "user", "content": prompt}
+        ],
+        "stream": False
+    }
+    
+    try:
+        response = requests.post(OLLAMA_URL, json=payload, timeout=30)
+        response.raise_for_status()
+        return response.json()['message']['content']
+    except requests.exceptions.ConnectionError:
+        return "❌ Error: Cannot connect to Ollama. Is it running? (Check if http://localhost:11434 is active)"
+    except Exception as e:
+        return f"❌ An error occurred: {str(e)}"
+
+# --- STREAMLIT UI ---
+st.set_page_config(page_title="NxT AI", page_icon="🚀")
+
+st.title("🚀 NxT AI")
+st.markdown("Your offline, local AI companion.")
+
+# Sidebar for settings
+with st.sidebar:
+    st.header("Settings")
+    selected_persona = st.selectbox("Choose Persona", list(PERSONAS.keys()))
+    st.info(f"Currently active: **{selected_persona}**")
+    
+    if st.button("Clear Chat"):
+        st.session_state.messages = []
+        st.rerun()
+
+# Initialize chat history
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+# Display chat messages
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+# User input
+if prompt := st.chat_input("Type something..."):
+    # 1. Add user message to chat
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    # 2. Check for "open [app]" trigger first (Fast & Local)
+    app_triggered = False
+    # Look for patterns like "open whatsapp", "launch spotify", etc.
+    match = re.search(r"(?:open|launch|start)\s+([a-zA-Z\s]+)", prompt, re.IGNORECASE)
+    if match:
+        app_keyword = match.group(1).strip()
+        result = open_macos_app(app_keyword)
+        if result:
+            app_triggered = True
+            with st.chat_message("assistant"):
+                st.markdown(result)
+            st.session_state.messages.append({"role": "assistant", "content": result})
+
+    # 3. Get AI response (keeps the conversation flowing even after opening an app)
+    with st.chat_message("assistant"):
+        system_prompt = PERSONAS[selected_persona]
+        # Pass history to Ollama
+        history = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages[:-1]]
+        
+        response = get_ollama_response(prompt, system_prompt, history)
+        st.markdown(response)
+        st.session_state.messages.append({"role": "assistant", "content": response})
 ```
 
